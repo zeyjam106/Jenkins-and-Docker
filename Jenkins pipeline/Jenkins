@@ -1,0 +1,55 @@
+@Library('shared-libs-microservices')_ 
+// Set Your Project/App Names
+MY_PROJECT_NAME = '{{ ns }}'
+MY_APP_NAME = '{{ appname.stdout }}'
+//==========================|  
+DEPLOY_ENV_DEV = 'dev'
+DEPLOY_ENV_PRE = 'preprod'
+DEPLOY_ENV_PROD = 'prod'
+pipeline {
+    agent { label 'master' }
+    environment {
+        PROJECT_NAME = "${MY_PROJECT_NAME}"
+        MS_NAME = "${MY_APP_NAME}"
+        JAVA_HOME = '{{ JavaHome }}'
+        DOCKER_REPO_PASSWORD = credentials('docker_token')
+    }
+    stages {
+        stage("Run-Up Stage") {
+            steps {
+                script {
+                    currentBuild.displayName = "${GIT_BRANCH}-${BUILD_NUMBER}"
+                }
+            }
+        }
+        stage("App Stage") {
+            when { expression { IS_ROLL_BACK == 'no' } }
+            steps {
+                script {
+                    echo 'Package building has being started'
+                    sh "mvn clean package -P ${CURRENT_DEPLOY_ENV} -DskipTests"
+                } 
+            }
+        }
+        stage('Docker Stages') {
+            stages{
+                stage("Docker Build") {
+                   steps {
+                       script { PipelineMethods.dockerLogin DOCKER_REPO_PASSWORD }
+                       echo "Building docker container with tag: $TAG"
+                       sh "docker build --rm -t nexus.kblab.local:8083/v1/repositories/$DOCKER_REPO/$PROJECT_NAME/$MS_NAME:$TAG ."
+                   }
+                }                
+                stage('Docker push images') {
+                    steps {
+                        echo "Pushing docker images"
+                        sh "docker push nexus.kblab.local:8083/v1/repositories/$DOCKER_REPO/$PROJECT_NAME/$MS_NAME"
+                        sh "docker images|grep 'nexus.kblab.local:8083/v1/repositories/$DOCKER_REPO/$PROJECT_NAME/$MS_NAME'|awk '{ print \$3 }'|xargs docker rmi --force 2>/dev/null"
+                        echo "Docker images pushed successful"
+                    }
+                }
+            }
+        }
+    }
+    post { always { cleanWs() } } 
+}
